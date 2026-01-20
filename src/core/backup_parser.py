@@ -158,7 +158,7 @@ class BackupParser:
         # Open database connection
         try:
             manifest_db = self.backup_path / MANIFEST_DB
-            self._connection = sqlite3.connect(f"file:{manifest_db}?mode=ro", uri=True)
+            self._connection = sqlite3.connect(f"file:{manifest_db}?mode=ro", uri=True, check_same_thread=False)
             self._connection.row_factory = sqlite3.Row
             return True
         except sqlite3.Error as e:
