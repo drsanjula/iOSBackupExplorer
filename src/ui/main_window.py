@@ -14,6 +14,7 @@ from PyQt6.QtGui import QAction, QKeySequence
 
 from .sidebar import Sidebar
 from .content_view import ContentView
+from .preview_panel import PreviewPanel
 from .styles import apply_stylesheet, is_dark_mode
 from ..utils.constants import APP_NAME, APP_VERSION, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT
 
@@ -112,24 +113,29 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         
-        # Splitter for resizable panels
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setHandleWidth(1)
+        # Main splitter for resizable panels
+        self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.main_splitter.setHandleWidth(1)
         
         # Sidebar
         self.sidebar = Sidebar()
-        splitter.addWidget(self.sidebar)
+        self.main_splitter.addWidget(self.sidebar)
         
         # Content view
         self.content_view = ContentView()
-        splitter.addWidget(self.content_view)
+        self.main_splitter.addWidget(self.content_view)
         
-        # Set initial sizes (sidebar fixed, content stretches)
-        splitter.setSizes([260, 1140])
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
+        # Preview panel (Pro mode only)
+        self.preview_panel = PreviewPanel()
+        self.main_splitter.addWidget(self.preview_panel)
         
-        layout.addWidget(splitter)
+        # Set initial sizes (sidebar fixed, content stretches, preview fixed)
+        self.main_splitter.setSizes([260, 840, 300])
+        self.main_splitter.setStretchFactor(0, 0)  # Sidebar
+        self.main_splitter.setStretchFactor(1, 1)  # Content
+        self.main_splitter.setStretchFactor(2, 0)  # Preview
+        
+        layout.addWidget(self.main_splitter)
     
     def _connect_signals(self):
         """Connect signals between components."""
@@ -140,6 +146,7 @@ class MainWindow(QMainWindow):
         
         # Content view signals
         self.content_view.export_finished.connect(self._on_export_finished)
+        self.content_view.table.itemSelectionChanged.connect(self._on_file_selected)
     
     def _on_backup_selected(self, path: Path):
         """Handle backup selection from sidebar."""
@@ -161,12 +168,33 @@ class MainWindow(QMainWindow):
         self.lite_mode_action.setChecked(mode == "lite")
         self.pro_mode_action.setChecked(mode == "pro")
         
+        # Show/hide preview panel based on mode
+        self.preview_panel.setVisible(mode == "pro")
+        
         # Update content view
         self.content_view.set_mode(mode)
         
         # Refresh stylesheet if needed
         from PyQt6.QtWidgets import QApplication
         apply_stylesheet(QApplication.instance(), mode)
+    
+    def _on_file_selected(self):
+        """Handle file selection in content view."""
+        if self._current_mode != "pro":
+            return
+        
+        selected_items = self.content_view.table.selectedItems()
+        if selected_items:
+            # Get the first column item of the first selected row
+            row = selected_items[0].row()
+            item = self.content_view.table.item(row, 0)
+            if item:
+                from ..core.data_extractors.camera_roll import MediaFile
+                media = item.data(Qt.ItemDataRole.UserRole)
+                if isinstance(media, MediaFile):
+                    self.preview_panel.set_file(media)
+        else:
+            self.preview_panel.clear()
     
     def _on_open_backup(self):
         """Handle File > Open Backup."""

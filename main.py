@@ -33,9 +33,10 @@ def main():
     app.setOrganizationName("drsanjula")
     app.setOrganizationDomain("github.com/drsanjula")
     
-    # Set default font
+    # Set default font (use San Francisco or fallback)
     font = QFont()
-    font.setFamily("-apple-system")
+    font.setFamily("SF Pro Text")
+    font.setStyleHint(QFont.StyleHint.SansSerif)
     font.setPointSize(13)
     app.setFont(font)
     
