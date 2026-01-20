@@ -77,6 +77,7 @@ class Sidebar(QWidget):
         
         self._current_mode = "pro"  # "lite" or "pro"
         self._backups: List[Dict[str, Any]] = []
+        self._needs_permission = False
         
         self._setup_ui()
         self._connect_signals()
@@ -173,15 +174,20 @@ class Sidebar(QWidget):
         has_access, message = check_backup_access()
         
         if not has_access:
+            # Show permission required message
             item = self.backups_section.add_item("Permission required", "🔒")
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
             item.setToolTip(message)
-            # Add instruction item
-            hint_item = self.backups_section.add_item("Grant Full Disk Access", "⚙️")
-            hint_item.setFlags(hint_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-            hint_item.setToolTip(message)
+            
+            # Add clickable "Request Access" button
+            request_item = self.backups_section.add_item("Request Access...", "⚙️")
+            request_item.setData(Qt.ItemDataRole.UserRole, "__request_permission__")
+            request_item.setToolTip("Click to open System Settings")
+            
+            self._needs_permission = True
             return
         
+        self._needs_permission = False
         self._backups = list_available_backups()
         
         if not self._backups:
@@ -226,9 +232,27 @@ class Sidebar(QWidget):
     
     def _on_backup_clicked(self, item: QListWidgetItem):
         """Handle backup selection."""
-        path = item.data(Qt.ItemDataRole.UserRole)
-        if path and isinstance(path, Path):
-            self.backup_selected.emit(path)
+        data = item.data(Qt.ItemDataRole.UserRole)
+        
+        # Check if this is the permission request action
+        if data == "__request_permission__":
+            self._request_permission()
+            return
+        
+        # Normal backup selection
+        if data and isinstance(data, Path):
+            self.backup_selected.emit(data)
+    
+    def _request_permission(self):
+        """Show permission dialog and handle result."""
+        from .permission_dialog import PermissionDialog
+        
+        dialog = PermissionDialog(self)
+        result = dialog.exec()
+        
+        if result == dialog.DialogCode.Rejected:
+            # User chose to browse custom folder
+            self._on_browse_clicked()
     
     def _on_category_clicked(self, item: QListWidgetItem):
         """Handle category selection."""
