@@ -17,6 +17,10 @@ from PyQt6.QtGui import QFont, QPixmap, QImage
 
 from ..core.backup_parser import BackupParser, Backup
 from ..core.data_extractors.camera_roll import CameraRollExtractor, MediaFile, ExportProgress
+from ..core.data_extractors.contacts import ContactsExtractor, Contact
+from ..core.data_extractors.messages import MessagesExtractor, Chat
+from ..core.data_extractors.notes import NotesExtractor, Note
+from ..core.data_extractors.call_history import CallHistoryExtractor, CallRecord
 from ..utils.helpers import format_file_size
 from ..utils.constants import DATA_TYPES
 
@@ -138,10 +142,16 @@ class ContentView(QWidget):
         
         self._parser: Optional[BackupParser] = None
         self._backup: Optional[Backup] = None
-        self._extractor: Optional[CameraRollExtractor] = None
         self._current_category: str = "camera_roll"
         self._export_worker: Optional[ExportWorker] = None
         self._mode: str = "pro"
+        
+        # Extractors for different data types
+        self._camera_extractor: Optional[CameraRollExtractor] = None
+        self._contacts_extractor: Optional[ContactsExtractor] = None
+        self._messages_extractor: Optional[MessagesExtractor] = None
+        self._notes_extractor: Optional[NotesExtractor] = None
+        self._calls_extractor: Optional[CallHistoryExtractor] = None
         
         self._setup_ui()
     
@@ -321,7 +331,13 @@ class ContentView(QWidget):
             return
         
         self._backup = self._parser.backup
-        self._extractor = CameraRollExtractor(self._parser)
+        
+        # Initialize all extractors
+        self._camera_extractor = CameraRollExtractor(self._parser)
+        self._contacts_extractor = ContactsExtractor(self._parser)
+        self._messages_extractor = MessagesExtractor(self._parser)
+        self._notes_extractor = NotesExtractor(self._parser)
+        self._calls_extractor = CallHistoryExtractor(self._parser)
         
         # Update header
         if self._backup:
@@ -364,23 +380,39 @@ class ContentView(QWidget):
         self.header_title.setText(info.get("name", category))
         self.header_subtitle.setText(info.get("description", ""))
         
-        if category == "camera_roll" and self._extractor:
+        # Load data based on category
+        if category == "camera_roll":
             self._load_camera_roll()
+        elif category == "contacts":
+            self._load_contacts()
+        elif category == "messages":
+            self._load_messages()
+        elif category == "notes":
+            self._load_notes()
+        elif category == "call_history":
+            self._load_call_history()
         else:
-            # Placeholder for other categories
-            self.table.setRowCount(0)
-            self.stat_total.update_value("0")
-            self.stat_photos.update_value("0")
-            self.stat_videos.update_value("0")
-            self.stat_size.update_value("0 MB")
+            self._clear_table()
+    
+    def _clear_table(self):
+        """Clear the table and reset stats."""
+        self.table.setRowCount(0)
+        self.stat_total.update_value("0")
+        self.stat_photos.update_value("-")
+        self.stat_videos.update_value("-")
+        self.stat_size.update_value("-")
     
     def _load_camera_roll(self):
         """Load Camera Roll data."""
-        if not self._extractor:
+        if not self._camera_extractor:
             return
         
+        # Update table columns
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["Filename", "Type", "Size", "Date"])
+        
         # Get stats
-        stats = self._extractor.get_stats()
+        stats = self._camera_extractor.get_stats()
         
         self.stat_total.update_value(str(stats["total_count"]))
         self.stat_photos.update_value(str(stats["photo_count"]))
@@ -388,28 +420,131 @@ class ContentView(QWidget):
         self.stat_size.update_value(stats["total_size_formatted"])
         
         # Populate table
-        files = self._extractor.get_all_media()
+        files = self._camera_extractor.get_all_media()
         self.table.setRowCount(len(files))
         
         for row, media in enumerate(files):
-            # Filename
             self.table.setItem(row, 0, QTableWidgetItem(media.filename))
-            
-            # Type
             type_str = "📷 Photo" if media.is_image else "🎬 Video"
             self.table.setItem(row, 1, QTableWidgetItem(type_str))
-            
-            # Size
             self.table.setItem(row, 2, QTableWidgetItem(media.size_formatted))
-            
-            # Date
-            date_str = ""
-            if media.modified_date:
-                date_str = media.modified_date.strftime("%Y-%m-%d %H:%M")
+            date_str = media.modified_date.strftime("%Y-%m-%d %H:%M") if media.modified_date else ""
             self.table.setItem(row, 3, QTableWidgetItem(date_str))
-            
-            # Store reference
             self.table.item(row, 0).setData(Qt.ItemDataRole.UserRole, media)
+    
+    def _load_contacts(self):
+        """Load Contacts data."""
+        if not self._contacts_extractor:
+            return
+        
+        # Update table columns
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["Name", "Phone", "Email", "Organization"])
+        
+        # Get stats
+        stats = self._contacts_extractor.get_stats()
+        contacts = self._contacts_extractor.get_all_contacts()
+        
+        self.stat_total.update_value(str(stats["total_count"]))
+        self.stat_photos.update_value(f"📞 {stats['with_phones']}")
+        self.stat_videos.update_value(f"📧 {stats['with_emails']}")
+        self.stat_size.update_value("-")
+        
+        # Populate table
+        self.table.setRowCount(len(contacts))
+        
+        for row, contact in enumerate(contacts):
+            self.table.setItem(row, 0, QTableWidgetItem(contact.display_name))
+            self.table.setItem(row, 1, QTableWidgetItem(contact.primary_phone))
+            self.table.setItem(row, 2, QTableWidgetItem(contact.primary_email))
+            self.table.setItem(row, 3, QTableWidgetItem(contact.organization))
+            self.table.item(row, 0).setData(Qt.ItemDataRole.UserRole, contact)
+    
+    def _load_messages(self):
+        """Load Messages data."""
+        if not self._messages_extractor:
+            return
+        
+        # Update table columns
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["Contact", "Messages", "Last Message", "Preview"])
+        
+        # Get stats
+        stats = self._messages_extractor.get_stats()
+        chats = self._messages_extractor.get_all_chats()
+        
+        self.stat_total.update_value(str(stats["chat_count"]))
+        self.stat_photos.update_value(f"💬 {stats['message_count']}")
+        self.stat_videos.update_value(f"📱 iMsg: {stats['imessage_count']}")
+        self.stat_size.update_value(f"📨 SMS: {stats['sms_count']}")
+        
+        # Populate table
+        self.table.setRowCount(len(chats))
+        
+        for row, chat in enumerate(chats):
+            self.table.setItem(row, 0, QTableWidgetItem(chat.display_name))
+            self.table.setItem(row, 1, QTableWidgetItem(str(chat.message_count)))
+            date_str = chat.last_message_date.strftime("%Y-%m-%d %H:%M") if chat.last_message_date else ""
+            self.table.setItem(row, 2, QTableWidgetItem(date_str))
+            self.table.setItem(row, 3, QTableWidgetItem(chat.preview[:50] + "..." if len(chat.preview) > 50 else chat.preview))
+            self.table.item(row, 0).setData(Qt.ItemDataRole.UserRole, chat)
+    
+    def _load_notes(self):
+        """Load Notes data."""
+        if not self._notes_extractor:
+            return
+        
+        # Update table columns
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["Title", "Words", "Modified", "Preview"])
+        
+        # Get stats
+        stats = self._notes_extractor.get_stats()
+        notes = self._notes_extractor.get_all_notes()
+        
+        self.stat_total.update_value(str(stats["note_count"]))
+        self.stat_photos.update_value(f"📝 {stats['total_words']} words")
+        self.stat_videos.update_value("-")
+        self.stat_size.update_value("-")
+        
+        # Populate table
+        self.table.setRowCount(len(notes))
+        
+        for row, note in enumerate(notes):
+            self.table.setItem(row, 0, QTableWidgetItem(note.title))
+            self.table.setItem(row, 1, QTableWidgetItem(str(note.word_count)))
+            self.table.setItem(row, 2, QTableWidgetItem(note.modified_formatted))
+            preview = note.preview[:50] + "..." if len(note.preview) > 50 else note.preview
+            self.table.setItem(row, 3, QTableWidgetItem(preview))
+            self.table.item(row, 0).setData(Qt.ItemDataRole.UserRole, note)
+    
+    def _load_call_history(self):
+        """Load Call History data."""
+        if not self._calls_extractor:
+            return
+        
+        # Update table columns  
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["Phone Number", "Type", "Duration", "Date"])
+        
+        # Get stats
+        stats = self._calls_extractor.get_stats()
+        calls = self._calls_extractor.get_all_calls()
+        
+        self.stat_total.update_value(str(stats["total_calls"]))
+        self.stat_photos.update_value(f"📥 {stats['incoming']}")
+        self.stat_videos.update_value(f"📤 {stats['outgoing']}")
+        self.stat_size.update_value(f"📵 {stats['missed']}")
+        
+        # Populate table
+        self.table.setRowCount(len(calls))
+        
+        for row, call in enumerate(calls):
+            self.table.setItem(row, 0, QTableWidgetItem(call.phone_number))
+            self.table.setItem(row, 1, QTableWidgetItem(f"{call.call_type_icon} {call.call_type_name}"))
+            self.table.setItem(row, 2, QTableWidgetItem(call.duration_formatted))
+            self.table.setItem(row, 3, QTableWidgetItem(call.date_formatted))
+            self.table.item(row, 0).setData(Qt.ItemDataRole.UserRole, call)
     
     def _on_selection_changed(self):
         """Handle table selection changes."""
@@ -417,19 +552,29 @@ class ContentView(QWidget):
         self.export_selected_btn.setEnabled(len(selected) > 0)
     
     def _export_all(self):
-        """Export all files."""
-        if not self._extractor:
-            return
-        
+        """Export all data based on current category."""
         destination = self._get_export_destination()
         if not destination:
             return
         
-        self._start_export(destination)
+        category = self._current_category
+        
+        if category == "camera_roll" and self._camera_extractor:
+            self._start_camera_export(destination)
+        elif category == "contacts" and self._contacts_extractor:
+            self._export_contacts(destination)
+        elif category == "messages" and self._messages_extractor:
+            self._export_messages(destination)
+        elif category == "notes" and self._notes_extractor:
+            self._export_notes(destination)
+        elif category == "call_history" and self._calls_extractor:
+            self._export_calls(destination)
     
     def _export_selected(self):
-        """Export selected files."""
-        if not self._extractor:
+        """Export selected items (Camera Roll only for now)."""
+        if self._current_category != "camera_roll" or not self._camera_extractor:
+            # For non-camera categories, export all
+            self._export_all()
             return
         
         # Get selected files
@@ -455,6 +600,62 @@ class ContentView(QWidget):
         # Export selected files
         self._start_export_files(files, destination)
     
+    def _export_contacts(self, destination: Path):
+        """Export contacts as vCards."""
+        count = self._contacts_extractor.export_all_vcards(destination)
+        QMessageBox.information(
+            self, "Export Complete",
+            f"Successfully exported {count} contacts as vCard files."
+        )
+        self.export_finished.emit(count)
+    
+    def _export_messages(self, destination: Path):
+        """Export messages as text files."""
+        count = self._messages_extractor.export_all_chats(destination)
+        QMessageBox.information(
+            self, "Export Complete",
+            f"Successfully exported {count} conversations as text files."
+        )
+        self.export_finished.emit(count)
+    
+    def _export_notes(self, destination: Path):
+        """Export notes as text files."""
+        count = self._notes_extractor.export_all_notes(destination)
+        QMessageBox.information(
+            self, "Export Complete",
+            f"Successfully exported {count} notes as text files."
+        )
+        self.export_finished.emit(count)
+    
+    def _export_calls(self, destination: Path):
+        """Export call history as CSV."""
+        csv_path = destination / "call_history.csv"
+        success = self._calls_extractor.export_all_calls(csv_path)
+        if success:
+            stats = self._calls_extractor.get_stats()
+            QMessageBox.information(
+                self, "Export Complete",
+                f"Successfully exported {stats['total_calls']} call records to:\n{csv_path}"
+            )
+            self.export_finished.emit(stats['total_calls'])
+        else:
+            QMessageBox.warning(self, "Export Failed", "Failed to export call history.")
+    
+    def _start_camera_export(self, destination: Path):
+        """Start Camera Roll export in background thread."""
+        self.export_started.emit()
+        
+        self.progress_container.show()
+        self.progress_bar.setValue(0)
+        self.export_all_btn.setEnabled(False)
+        self.export_selected_btn.setEnabled(False)
+        
+        self._export_worker = ExportWorker(self._camera_extractor, destination)
+        self._export_worker.progress.connect(self._on_export_progress)
+        self._export_worker.finished.connect(self._on_export_finished)
+        self._export_worker.error.connect(self._on_export_error)
+        self._export_worker.start()
+    
     def _get_export_destination(self) -> Optional[Path]:
         """Show folder picker and return selected path."""
         folder = QFileDialog.getExistingDirectory(
@@ -468,23 +669,11 @@ class ContentView(QWidget):
             return Path(folder)
         return None
     
-    def _start_export(self, destination: Path):
-        """Start export in background thread."""
-        self.export_started.emit()
-        
-        self.progress_container.show()
-        self.progress_bar.setValue(0)
-        self.export_all_btn.setEnabled(False)
-        self.export_selected_btn.setEnabled(False)
-        
-        self._export_worker = ExportWorker(self._extractor, destination)
-        self._export_worker.progress.connect(self._on_export_progress)
-        self._export_worker.finished.connect(self._on_export_finished)
-        self._export_worker.error.connect(self._on_export_error)
-        self._export_worker.start()
-    
     def _start_export_files(self, files: List[MediaFile], destination: Path):
         """Start exporting specific files."""
+        if not self._camera_extractor:
+            return
+        
         self.export_started.emit()
         
         self.progress_container.show()
@@ -497,7 +686,7 @@ class ContentView(QWidget):
             self.progress_bar.setValue(int(p.percentage))
             self.progress_label.setText(f"Exporting: {p.current_file}")
         
-        count = self._extractor.export_files(files, destination, progress_callback)
+        count = self._camera_extractor.export_files(files, destination, progress_callback)
         self._on_export_finished(count)
     
     @pyqtSlot(int, int, str)
