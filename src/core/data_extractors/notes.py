@@ -14,6 +14,7 @@ import html
 import re
 
 from ..backup_parser import BackupParser, BackupFile
+from ...utils.helpers import sanitize_filename
 
 
 # iOS uses a different epoch (2001-01-01) for dates
@@ -254,7 +255,7 @@ class NotesExtractor:
             ]
             
             with open(destination, "w", encoding="utf-8") as f:
-                f.write("\n".join(lines))
+                f.write("\\n".join(lines))
             
             return True
         except Exception as e:
@@ -282,7 +283,7 @@ class NotesExtractor:
         for note in notes:
             filename = f"{note.title}.txt"
             # Sanitize filename
-            filename = "".join(c for c in filename if c.isalnum() or c in " ._-")
+            filename = sanitize_filename(filename)
             filename = filename[:100]  # Limit length
             
             filepath = destination / filename

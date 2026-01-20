@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any
 
 from ..backup_parser import BackupParser, BackupFile
-from ...utils.helpers import format_file_size
+from ...utils.helpers import format_file_size, sanitize_filename
 
 
 # iOS uses a different epoch (2001-01-01) for dates
@@ -291,7 +291,7 @@ class MessagesExtractor:
             
             filename = f"{chat.display_name}.txt"
             # Sanitize filename
-            filename = "".join(c for c in filename if c.isalnum() or c in " ._-@+")
+            filename = sanitize_filename(filename)
             
             filepath = destination / filename
             

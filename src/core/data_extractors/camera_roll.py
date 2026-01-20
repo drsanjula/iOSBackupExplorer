@@ -13,7 +13,7 @@ from datetime import datetime
 
 from ..backup_parser import BackupParser, BackupFile
 from ...utils.constants import MEDIA_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
-from ...utils.helpers import format_file_size, ensure_dir
+from ...utils.helpers import format_file_size, ensure_dir, sanitize_filename
 
 
 @dataclass
@@ -248,7 +248,7 @@ class CameraRollExtractor:
         
         for i, media_file in enumerate(files):
             # Generate unique filename
-            filename = media_file.filename
+            filename = sanitize_filename(media_file.filename)
             if filename in used_names:
                 used_names[filename] += 1
                 name_part = Path(filename).stem
@@ -313,7 +313,7 @@ class CameraRollExtractor:
         used_names: dict = {}
         
         for i, media_file in enumerate(files):
-            filename = media_file.filename
+            filename = sanitize_filename(media_file.filename)
             if filename in used_names:
                 used_names[filename] += 1
                 name_part = Path(filename).stem

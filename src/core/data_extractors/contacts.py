@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Dict, Any
 
 from ..backup_parser import BackupParser, BackupFile
-from ...utils.helpers import format_file_size
+from ...utils.helpers import format_file_size, sanitize_filename
 
 
 @dataclass
@@ -226,7 +226,7 @@ class ContactsExtractor:
         for contact in contacts:
             filename = f"{contact.display_name}.vcf"
             # Sanitize filename
-            filename = "".join(c for c in filename if c.isalnum() or c in " ._-")
+            filename = sanitize_filename(filename)
             
             filepath = destination / filename
             

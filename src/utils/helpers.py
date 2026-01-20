@@ -90,6 +90,34 @@ def get_file_extension(filename: str) -> str:
     return Path(filename).suffix.lower()
 
 
+def sanitize_filename(filename: str) -> str:
+    """
+    Sanitize filename to prevent directory traversal and invalid chars.
+    
+    Args:
+        filename: Original filename
+        
+    Returns:
+        Safe filename
+    """
+    if not filename:
+        return "unnamed"
+    
+    # Remove directory path components
+    filename = os.path.basename(filename)
+    
+    # Replace potentially dangerous characters
+    # Keep alphanumeric, dot, dash, underscore, space, parenthesis
+    safe_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._- ()[]")
+    clean_name = "".join(c if c in safe_chars else "_" for c in filename)
+    
+    # Ensure it's not empty or just dots
+    if not clean_name or set(clean_name) == {'.'}:
+        clean_name = f"file_{hash(filename)}"
+        
+    return clean_name
+
+
 def is_valid_backup_folder(path: Path) -> bool:
     """
     Check if a folder appears to be a valid iOS backup.
