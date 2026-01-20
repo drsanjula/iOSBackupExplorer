@@ -88,6 +88,33 @@ class EmptyState(QWidget):
         layout.addWidget(message_label)
 
 
+class LoadWorker(QThread):
+    """Worker thread for loading data."""
+    
+    finished = pyqtSignal(object)  # data (list of items)
+    stats_ready = pyqtSignal(dict)  # stats dict
+    error = pyqtSignal(str)
+    
+    def __init__(self, fetch_func: Callable, stats_func: Callable = None):
+        super().__init__()
+        self.fetch_func = fetch_func
+        self.stats_func = stats_func
+    
+    def run(self):
+        """Run the load operation."""
+        try:
+            # Fetch stats first if available
+            if self.stats_func:
+                stats = self.stats_func()
+                self.stats_ready.emit(stats)
+            
+            # Fetch data
+            data = self.fetch_func()
+            self.finished.emit(data)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 class ExportWorker(QThread):
     """Worker thread for exporting files with detailed stats."""
     
@@ -162,6 +189,7 @@ class ContentView(QWidget):
         self._backup: Optional[Backup] = None
         self._current_category: str = "camera_roll"
         self._export_worker: Optional[ExportWorker] = None
+        self._load_worker: Optional[LoadWorker] = None
         self._mode: str = "pro"
         
         # Extractors for different data types
@@ -190,6 +218,14 @@ class ContentView(QWidget):
             "Choose an iOS backup from the sidebar to view its contents."
         )
         self.stack.addWidget(self.empty_state)
+        
+        # Loading state
+        self.loading_state = EmptyState(
+            "⏳",
+            "Loading Data...",
+            "Please wait while we analyze your backup."
+        )
+        self.stack.addWidget(self.loading_state)
         
         # Content container
         self.content_widget = QWidget()
@@ -409,19 +445,122 @@ class ContentView(QWidget):
         self.header_title.setText(info.get("name", category))
         self.header_subtitle.setText(info.get("description", ""))
         
-        # Load data based on category
-        if category == "camera_roll":
-            self._load_camera_roll()
-        elif category == "contacts":
-            self._load_contacts()
-        elif category == "messages":
-            self._load_messages()
-        elif category == "notes":
-            self._load_notes()
-        elif category == "call_history":
-            self._load_call_history()
+        # Stop previous load if running
+        if self._load_worker and self._load_worker.isRunning():
+            self._load_worker.wait()
+        
+        self.stack.setCurrentWidget(self.loading_state)
+        # Process events to show loading state immediately
+        QApplication.processEvents()
+        
+        fetch_func = None
+        stats_func = None
+        columns = []
+        
+        if category == "camera_roll" and self._camera_extractor:
+            fetch_func = self._camera_extractor.get_all_media
+            stats_func = self._camera_extractor.get_stats
+            columns = ["Filename", "Type", "Size", "Date"]
+            
+        elif category == "contacts" and self._contacts_extractor:
+            fetch_func = self._contacts_extractor.get_all_contacts
+            stats_func = self._contacts_extractor.get_stats
+            columns = ["Name", "Phone", "Email", "Organization"]
+            
+        elif category == "messages" and self._messages_extractor:
+            fetch_func = self._messages_extractor.get_all_chats
+            stats_func = self._messages_extractor.get_stats
+            columns = ["Contact", "Messages", "Last Message", "Preview"]
+            
+        elif category == "notes" and self._notes_extractor:
+            fetch_func = self._notes_extractor.get_all_notes
+            stats_func = self._notes_extractor.get_stats
+            columns = ["Title", "Words", "Modified", "Preview"]
+            
+        elif category == "call_history" and self._calls_extractor:
+            fetch_func = self._calls_extractor.get_all_calls
+            stats_func = self._calls_extractor.get_stats
+            columns = ["Phone Number", "Type", "Duration", "Date"]
+        
+        if fetch_func:
+            self._setup_table_columns(columns)
+            self._start_loading(fetch_func, stats_func)
         else:
             self._clear_table()
+            self.stack.setCurrentWidget(self.content_widget)
+
+    def _setup_table_columns(self, labels: List[str]):
+        """Setup table columns."""
+        self.table.setColumnCount(len(labels))
+        self.table.setHorizontalHeaderLabels(labels)
+        self.table.setRowCount(0)
+
+    def _start_loading(self, fetch_func, stats_func):
+        """Start the background load worker."""
+        self._load_worker = LoadWorker(fetch_func, stats_func)
+        self._load_worker.stats_ready.connect(self._on_stats_ready)
+        self._load_worker.finished.connect(self._on_load_finished)
+        self._load_worker.error.connect(self._on_load_error)
+        self._load_worker.start()
+
+    @pyqtSlot(dict)
+    def _on_stats_ready(self, stats: dict):
+        """Handle stats update."""
+        category = self._current_category
+        
+        if category == "camera_roll":
+            self.stat_total.update_value(str(stats["total_count"]))
+            self.stat_photos.update_value(str(stats["photo_count"]))
+            self.stat_videos.update_value(str(stats["video_count"]))
+            self.stat_size.update_value(stats["total_size_formatted"])
+            
+        elif category == "contacts":
+            self.stat_total.update_value(str(stats["total_count"]))
+            self.stat_photos.update_value(f"📞 {stats['with_phones']}")
+            self.stat_videos.update_value(f"📧 {stats['with_emails']}")
+            self.stat_size.update_value("-")
+            
+        elif category == "messages":
+            self.stat_total.update_value(str(stats["chat_count"]))
+            self.stat_photos.update_value(f"💬 {stats['message_count']}")
+            self.stat_videos.update_value(f"📱 iMsg: {stats['imessage_count']}")
+            self.stat_size.update_value(f"📨 SMS: {stats['sms_count']}")
+            
+        elif category == "notes":
+            self.stat_total.update_value(str(stats["note_count"]))
+            self.stat_photos.update_value(f"📝 {stats['total_words']} words")
+            self.stat_videos.update_value("-")
+            self.stat_size.update_value("-")
+            
+        elif category == "call_history":
+            self.stat_total.update_value(str(stats["total_calls"]))
+            self.stat_photos.update_value(f"📥 {stats['incoming']}")
+            self.stat_videos.update_value(f"📤 {stats['outgoing']}")
+            self.stat_size.update_value(f"📵 {stats['missed']}")
+
+    @pyqtSlot(object)
+    def _on_load_finished(self, data: object):
+        """Handle load completion."""
+        self.stack.setCurrentWidget(self.content_widget)
+        
+        category = self._current_category
+        if category == "camera_roll":
+            self._populate_camera_roll(data)
+        elif category == "contacts":
+            self._populate_contacts(data)
+        elif category == "messages":
+            self._populate_messages(data)
+        elif category == "notes":
+            self._populate_notes(data)
+        elif category == "call_history":
+            self._populate_call_history(data)
+    
+    @pyqtSlot(str)
+    def _on_load_error(self, error: str):
+        """Handle load error."""
+        self.stack.setCurrentWidget(self.content_widget)
+        # Maybe show error in empty state instead?
+        QMessageBox.warning(self, "Load Error", f"Failed to load data: {error}")
     
     def _clear_table(self):
         """Clear the table and reset stats."""
@@ -431,25 +570,8 @@ class ContentView(QWidget):
         self.stat_videos.update_value("-")
         self.stat_size.update_value("-")
     
-    def _load_camera_roll(self):
-        """Load Camera Roll data."""
-        if not self._camera_extractor:
-            return
-        
-        # Update table columns
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["Filename", "Type", "Size", "Date"])
-        
-        # Get stats
-        stats = self._camera_extractor.get_stats()
-        
-        self.stat_total.update_value(str(stats["total_count"]))
-        self.stat_photos.update_value(str(stats["photo_count"]))
-        self.stat_videos.update_value(str(stats["video_count"]))
-        self.stat_size.update_value(stats["total_size_formatted"])
-        
-        # Populate table
-        files = self._camera_extractor.get_all_media()
+    def _populate_camera_roll(self, files: List[MediaFile]):
+        """Populate table with Camera Roll data."""
         self.table.setRowCount(len(files))
         
         for row, media in enumerate(files):
@@ -461,25 +583,8 @@ class ContentView(QWidget):
             self.table.setItem(row, 3, QTableWidgetItem(date_str))
             self.table.item(row, 0).setData(Qt.ItemDataRole.UserRole, media)
     
-    def _load_contacts(self):
-        """Load Contacts data."""
-        if not self._contacts_extractor:
-            return
-        
-        # Update table columns
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["Name", "Phone", "Email", "Organization"])
-        
-        # Get stats
-        stats = self._contacts_extractor.get_stats()
-        contacts = self._contacts_extractor.get_all_contacts()
-        
-        self.stat_total.update_value(str(stats["total_count"]))
-        self.stat_photos.update_value(f"📞 {stats['with_phones']}")
-        self.stat_videos.update_value(f"📧 {stats['with_emails']}")
-        self.stat_size.update_value("-")
-        
-        # Populate table
+    def _populate_contacts(self, contacts: List[Contact]):
+        """Populate table with Contacts data."""
         self.table.setRowCount(len(contacts))
         
         for row, contact in enumerate(contacts):
@@ -489,25 +594,8 @@ class ContentView(QWidget):
             self.table.setItem(row, 3, QTableWidgetItem(contact.organization))
             self.table.item(row, 0).setData(Qt.ItemDataRole.UserRole, contact)
     
-    def _load_messages(self):
-        """Load Messages data."""
-        if not self._messages_extractor:
-            return
-        
-        # Update table columns
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["Contact", "Messages", "Last Message", "Preview"])
-        
-        # Get stats
-        stats = self._messages_extractor.get_stats()
-        chats = self._messages_extractor.get_all_chats()
-        
-        self.stat_total.update_value(str(stats["chat_count"]))
-        self.stat_photos.update_value(f"💬 {stats['message_count']}")
-        self.stat_videos.update_value(f"📱 iMsg: {stats['imessage_count']}")
-        self.stat_size.update_value(f"📨 SMS: {stats['sms_count']}")
-        
-        # Populate table
+    def _populate_messages(self, chats: List[Chat]):
+        """Populate table with Messages data."""
         self.table.setRowCount(len(chats))
         
         for row, chat in enumerate(chats):
@@ -518,25 +606,8 @@ class ContentView(QWidget):
             self.table.setItem(row, 3, QTableWidgetItem(chat.preview[:50] + "..." if len(chat.preview) > 50 else chat.preview))
             self.table.item(row, 0).setData(Qt.ItemDataRole.UserRole, chat)
     
-    def _load_notes(self):
-        """Load Notes data."""
-        if not self._notes_extractor:
-            return
-        
-        # Update table columns
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["Title", "Words", "Modified", "Preview"])
-        
-        # Get stats
-        stats = self._notes_extractor.get_stats()
-        notes = self._notes_extractor.get_all_notes()
-        
-        self.stat_total.update_value(str(stats["note_count"]))
-        self.stat_photos.update_value(f"📝 {stats['total_words']} words")
-        self.stat_videos.update_value("-")
-        self.stat_size.update_value("-")
-        
-        # Populate table
+    def _populate_notes(self, notes: List[Note]):
+        """Populate table with Notes data."""
         self.table.setRowCount(len(notes))
         
         for row, note in enumerate(notes):
@@ -547,25 +618,8 @@ class ContentView(QWidget):
             self.table.setItem(row, 3, QTableWidgetItem(preview))
             self.table.item(row, 0).setData(Qt.ItemDataRole.UserRole, note)
     
-    def _load_call_history(self):
-        """Load Call History data."""
-        if not self._calls_extractor:
-            return
-        
-        # Update table columns  
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["Phone Number", "Type", "Duration", "Date"])
-        
-        # Get stats
-        stats = self._calls_extractor.get_stats()
-        calls = self._calls_extractor.get_all_calls()
-        
-        self.stat_total.update_value(str(stats["total_calls"]))
-        self.stat_photos.update_value(f"📥 {stats['incoming']}")
-        self.stat_videos.update_value(f"📤 {stats['outgoing']}")
-        self.stat_size.update_value(f"📵 {stats['missed']}")
-        
-        # Populate table
+    def _populate_call_history(self, calls: List[CallRecord]):
+        """Populate table with Call History data."""
         self.table.setRowCount(len(calls))
         
         for row, call in enumerate(calls):
