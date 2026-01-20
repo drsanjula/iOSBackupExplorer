@@ -12,7 +12,6 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
-from ..utils.helpers import list_available_backups
 from ..utils.constants import DATA_TYPES, DEFAULT_BACKUP_PATH
 
 
@@ -166,12 +165,29 @@ class Sidebar(QWidget):
     
     def _load_backups(self):
         """Load available backups from default location."""
+        from ..utils.helpers import list_available_backups, check_backup_access
+        
         self.backups_section.clear()
+        
+        # Check if we have access
+        has_access, message = check_backup_access()
+        
+        if not has_access:
+            item = self.backups_section.add_item("Permission required", "🔒")
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            item.setToolTip(message)
+            # Add instruction item
+            hint_item = self.backups_section.add_item("Grant Full Disk Access", "⚙️")
+            hint_item.setFlags(hint_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            hint_item.setToolTip(message)
+            return
+        
         self._backups = list_available_backups()
         
         if not self._backups:
             item = self.backups_section.add_item("No backups found", "❌")
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            item.setToolTip("Use 'Browse Custom...' to select a backup folder")
         else:
             for backup in self._backups:
                 display_name = backup.get("display_name", backup.get("name", "Unknown"))

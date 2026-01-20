@@ -142,6 +142,34 @@ def get_device_info(backup_path: Path) -> Dict[str, Any]:
     }
 
 
+def check_backup_access() -> tuple[bool, str]:
+    """
+    Check if the app has permission to access the iOS backup directory.
+    
+    Returns:
+        Tuple of (has_access, message)
+    """
+    from .constants import DEFAULT_BACKUP_PATH
+    
+    if not DEFAULT_BACKUP_PATH.exists():
+        return True, "Backup directory does not exist yet"
+    
+    try:
+        # Try to list the directory
+        list(DEFAULT_BACKUP_PATH.iterdir())
+        return True, "Access granted"
+    except PermissionError:
+        return False, (
+            "Full Disk Access required.\n\n"
+            "To grant access:\n"
+            "1. Open System Settings → Privacy & Security → Full Disk Access\n"
+            "2. Click '+' and add Terminal (or your Python interpreter)\n"
+            "3. Restart the application"
+        )
+    except Exception as e:
+        return False, f"Error accessing backups: {e}"
+
+
 def list_available_backups(backup_dir: Optional[Path] = None) -> List[Dict[str, Any]]:
     """
     List all available iOS backups in the given directory.
@@ -162,11 +190,19 @@ def list_available_backups(backup_dir: Optional[Path] = None) -> List[Dict[str, 
     if not backup_dir.exists():
         return backups
     
-    for entry in backup_dir.iterdir():
-        if entry.is_dir() and is_valid_backup_folder(entry):
-            device_info = get_device_info(entry)
-            device_info["path"] = entry
-            backups.append(device_info)
+    try:
+        for entry in backup_dir.iterdir():
+            try:
+                if entry.is_dir() and is_valid_backup_folder(entry):
+                    device_info = get_device_info(entry)
+                    device_info["path"] = entry
+                    backups.append(device_info)
+            except PermissionError:
+                # Skip individual backup folders we can't access
+                continue
+    except PermissionError:
+        # Can't access the backup directory at all
+        return backups
     
     # Sort by last backup date (newest first)
     backups.sort(
