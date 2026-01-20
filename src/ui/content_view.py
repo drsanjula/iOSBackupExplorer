@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget,
     QTableWidgetItem, QPushButton, QHeaderView, QFrame,
     QProgressBar, QFileDialog, QMessageBox, QGridLayout,
-    QStackedWidget, QScrollArea
+    QStackedWidget, QScrollArea, QApplication
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, pyqtSlot
 from PyQt6.QtGui import QFont, QPixmap, QImage
@@ -89,10 +89,11 @@ class EmptyState(QWidget):
 
 
 class ExportWorker(QThread):
-    """Worker thread for exporting files."""
+    """Worker thread for exporting files with detailed stats."""
     
-    progress = pyqtSignal(int, int, str)  # current, total, filename
-    finished = pyqtSignal(int)  # successful count
+    # current, total, filename, stats_dict
+    progress = pyqtSignal(int, int, str, dict)
+    finished = pyqtSignal(int)
     error = pyqtSignal(str)
     
     def __init__(self, extractor: CameraRollExtractor, destination: Path, filter_type: str = None):
@@ -104,16 +105,33 @@ class ExportWorker(QThread):
     
     def run(self):
         """Run the export operation."""
+        import time
         try:
             successful = 0
-            for progress in self.extractor.export_all(
+            start_time = time.time()
+            
+            for p in self.extractor.export_all(
                 self.destination,
                 filter_type=self.filter_type
             ):
                 if self._cancelled:
                     break
-                self.progress.emit(progress.current, progress.total, progress.current_file)
-                successful = progress.current
+                
+                # Calculate stats
+                elapsed = time.time() - start_time
+                rate = p.current / elapsed if elapsed > 0 else 0
+                remaining_items = p.total - p.current
+                eta_seconds = remaining_items / rate if rate > 0 else 0
+                
+                stats = {
+                    "rate": f"{rate:.1f} files/s",
+                    "eta": f"{int(eta_seconds)}s",
+                    "elapsed": f"{int(elapsed)}s",
+                    "percentage": p.percentage
+                }
+                
+                self.progress.emit(p.current, p.total, p.current_file, stats)
+                successful = p.current
             
             self.finished.emit(successful)
         except Exception as e:
@@ -281,9 +299,20 @@ class ContentView(QWidget):
         self.progress_bar.setTextVisible(True)
         progress_layout.addWidget(self.progress_bar)
         
+        # Stats container
+        stats_layout = QHBoxLayout()
+        
         self.progress_label = QLabel("")
-        self.progress_label.setStyleSheet("color: #888; font-size: 12px;")
-        progress_layout.addWidget(self.progress_label)
+        self.progress_label.setStyleSheet("color: #333; font-weight: 500;")
+        stats_layout.addWidget(self.progress_label)
+        
+        stats_layout.addStretch()
+        
+        self.stats_label = QLabel("")
+        self.stats_label.setStyleSheet("color: #666; font-size: 11px;")
+        stats_layout.addWidget(self.stats_label)
+        
+        progress_layout.addLayout(stats_layout)
         
         self.progress_container.hide()
         export_layout.addWidget(self.progress_container)
@@ -682,19 +711,33 @@ class ContentView(QWidget):
         self.export_selected_btn.setEnabled(False)
         
         # Export directly (could be threaded for large selections)
+        self.stats_label.setText("Exporting selected files...")
+        
         def progress_callback(p: ExportProgress):
             self.progress_bar.setValue(int(p.percentage))
             self.progress_label.setText(f"Exporting: {p.current_file}")
+            # Ensure UI updates during blocking operation
+            QApplication.processEvents()
         
         count = self._camera_extractor.export_files(files, destination, progress_callback)
         self._on_export_finished(count)
     
-    @pyqtSlot(int, int, str)
-    def _on_export_progress(self, current: int, total: int, filename: str):
-        """Handle export progress update."""
-        percentage = int((current / total) * 100) if total > 0 else 0
-        self.progress_bar.setValue(percentage)
-        self.progress_label.setText(f"Exporting: {filename} ({current}/{total})")
+    @pyqtSlot(int, int, str, dict)
+    def _on_export_progress(self, current: int, total: int, filename: str, stats: dict):
+        """Handle export progress update with detailed stats."""
+        # Update progress bar
+        self.progress_bar.setValue(int(stats.get("percentage", 0)))
+        
+        # Update filename label (truncate if too long)
+        display_name = filename
+        if len(display_name) > 40:
+            display_name = "..." + display_name[-37:]
+        self.progress_label.setText(f"Exporting: {display_name}")
+        
+        # Update stats label
+        rate = stats.get("rate", "-")
+        eta = stats.get("eta", "-")
+        self.stats_label.setText(f"Speed: {rate} • ETA: {eta} • {current}/{total}")
     
     @pyqtSlot(int)
     def _on_export_finished(self, count: int):
