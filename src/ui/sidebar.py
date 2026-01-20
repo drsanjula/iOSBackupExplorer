@@ -174,15 +174,14 @@ class Sidebar(QWidget):
         has_access, message = check_backup_access()
         
         if not has_access:
-            # Show permission required message
-            item = self.backups_section.add_item("Permission required", "🔒")
-            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-            item.setToolTip(message)
+            # Show friendly permission request
+            item = self.backups_section.add_item("Enable Auto-Discovery", "⚙️")
+            item.setData(Qt.ItemDataRole.UserRole, "__request_permission__")
+            item.setToolTip("Full Disk Access needed to find backups automatically.\nYou can still browse manually below.")
             
-            # Add clickable "Request Access" button
-            request_item = self.backups_section.add_item("Request Access...", "⚙️")
-            request_item.setData(Qt.ItemDataRole.UserRole, "__request_permission__")
-            request_item.setToolTip("Click to open System Settings")
+            # Add explicit hint
+            hint = self.backups_section.add_item("Or browse manually ↓", "")
+            hint.setFlags(hint.flags() & ~Qt.ItemFlag.ItemIsSelectable)
             
             self._needs_permission = True
             return

@@ -55,9 +55,9 @@ class PermissionDialog(QDialog):
         
         # Message
         message = QLabel(
-            "iOS Backup Explorer needs Full Disk Access to read your iOS backups.\n\n"
-            "This permission is required because macOS protects the backup folder "
-            "for your privacy and security."
+            "Access to the default iOS backup folder requires Full Disk Access.\n\n"
+            "If you prefer not to grant this, you can simply browse for your "
+            "backup folder manually using the 'Browse Custom Folder' button."
         )
         message.setWordWrap(True)
         message.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -77,6 +77,7 @@ class PermissionDialog(QDialog):
         inst_layout.setSpacing(8)
         
         steps = [
+            "To enable Auto-Discovery:",
             "1. Click 'Open System Settings' below",
             "2. Find 'Terminal' (or 'Python') in the list",
             "3. Toggle the switch to enable access",
